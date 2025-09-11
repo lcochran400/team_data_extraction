@@ -7,8 +7,6 @@ import os
 
 load_dotenv()
 
-conn = duckdb.connect("league_data.db")
-
 # API Structures
 riotapi="https://americas.api.riotgames.com"
 puuidapi="/riot/account/v1/accounts/by-riot-id/"
@@ -19,8 +17,12 @@ breakdownapi = "/lol/match/v5/matches/"
 gameName=["Grumby", "T1 Ruler jr", "FlareStriker", "Serezal", "MopishSeeker"]
 tagLine=["GRMBY", "NA1", "NA1", "7777", "NA1"]
 apikey = os.getenv('apikey')
+database_path = os.getenv('database_path')
 startTime="0"
 matchCount="100"
+
+# Connect to local db
+conn = duckdb.connect(database_path)
 
 # List of PUUIDs pulled from game names and tagline API call
 puuid_list = []
