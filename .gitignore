@@ -1,0 +1,23 @@
+# Virtual environment
+.venv/
+
+# API keys & secrets
+*.env
+.env
+
+
+# Database files
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+desktop.ini

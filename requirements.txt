@@ -1,0 +1,12 @@
+# Core dependencies for League API Project
+
+#HTTP requests to Riot API
+requests
+
+#Load secrets (API keys) from .env file
+python-dotenv
+
+#Store data
+dbt-duckdb
+
+#Add space beteween API request
