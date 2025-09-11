@@ -1,7 +1,13 @@
 import duckdb
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+database_path = os.getenv('database_path')
 
 # Connecting to duckdb database
-conn = duckdb.connect('league_data.db')
+conn = duckdb.connect(database_path)
 
 print("Initializing League of Legends database...")
 
