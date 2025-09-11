@@ -8,32 +8,50 @@ import os
 load_dotenv()
 
 # API Structures
-riotapi="https://americas.api.riotgames.com"
-puuidapi="/riot/account/v1/accounts/by-riot-id/"
-matchapi="/lol/match/v5/matches/by-puuid/"
-breakdownapi = "/lol/match/v5/matches/"
+RIOT_API_BASE ="https://americas.api.riotgames.com"
+PUUID_API_ENDPOINT ="/riot/account/v1/accounts/by-riot-id/"
+MATCH_API_ENDPOINT ="/lol/match/v5/matches/by-puuid/"
+MATCH_BREAKDOWN_API_ENDPOINT = "/lol/match/v5/matches/"
+START_TIME="0" # This is mandatory for the API call - doesn't need to be changed
+MATCH_COUNT="100" # The number of recent matches per puuid you want to pull
+MIN_SHARED_PLAYERS = 4 # The number of team members that must be in a match for it to be considered
+RATE_LIMIT_DELAY = 1.2 # This ensures that you won't hit the API limits (max 100 calls in 2 mins)
 
 # Team Members
-gameName=["Grumby", "T1 Ruler jr", "FlareStriker", "Serezal", "MopishSeeker"]
-tagLine=["GRMBY", "NA1", "NA1", "7777", "NA1"]
+TEAM_MEMBERS = [
+    {"name": "Grumby", "tag": "GRMBY"},
+    {"name": "T1 Ruler jr", "tag": "NA1"},
+    {"name": "FlareStriker", "tag": "NA1"},
+    {"name": "Serezal", "tag": "7777"},
+    {"name": "MopishSeeker", "tag": "NA1"}
+]
+
+# Environment variables
 apikey = os.getenv('apikey')
 database_path = os.getenv('database_path')
-startTime="0"
-matchCount="100"
+
 
 # Connect to local db
 conn = duckdb.connect(database_path)
 
-# List of PUUIDs pulled from game names and tagline API call
-puuid_list = []
+# Dictionary of name & PUUIDs pulled from game names and tagline API call
+gamer_dict = {}
 
-for player, tag in zip(gameName, tagLine):
-    r = requests.get(riotapi + puuidapi + player + "/" + tag + "?api_key=" + apikey)
+for member in TEAM_MEMBERS:
+
+    name = member["name"]
+    tag = member["tag"]
+
+    print(f"Collecting PUUID for {name}#{tag}")
+
+    r = requests.get(RIOT_API_BASE + PUUID_API_ENDPOINT + name + "/" + tag + "?api_key=" + apikey)
+
+    time.sleep(RATE_LIMIT_DELAY)
 
     if r.status_code != 200:
-        print(f"Error getting PUUID for {player}#{tag}: {r.status_code}")
+        print(f"Error getting PUUID for {name}#{tag}: {r.status_code}")
         if r.status_code == 404:
-            print(f"Player {player}#{tag} not found")
+            print(f"Player {name}#{tag} not found")
         elif r.status_code == 403:
             print("Invalid API key")
         elif r.status_code == 429:
@@ -44,21 +62,37 @@ for player, tag in zip(gameName, tagLine):
 
     data = json.loads(r.text)
     puuid = data["puuid"]
-    puuid_list.append(puuid)
+    gamer_dict[name] = puuid
 
-# Dictionary of gamer name + PUUID for easier associations
-gamerDict = {}
-
-for player, id in zip(gameName, puuid_list):
-    gamerDict[player] = id
+print("PUUIDs collected")
 
 # Dictionary of lists - each key (player) has a value (list) of all matches they have played
 matchDict = {}
 
-for player, id in gamerDict.items():
-    r = requests.get(riotapi + matchapi + id + "/ids?type=ranked&start=" + startTime + "&count=" + matchCount + "&api_key=" + apikey)
+for player, id in gamer_dict.items():
+
+    print(f"Collecting latest {MATCH_COUNT} matche IDs for {player}")
+
+    r = requests.get(RIOT_API_BASE + MATCH_API_ENDPOINT + id + "/ids?type=ranked&start=" + START_TIME + "&count=" + MATCH_COUNT + "&api_key=" + apikey)
+
+    time.sleep(RATE_LIMIT_DELAY)
+
+    if r.status_code != 200:
+        print(f"Error getting match IDs for {player}: {r.status_code}")
+        if r.status_code == 404:
+            print(f"Player {player} matches not found")
+        elif r.status_code == 403:
+            print("Invalid API key")
+        elif r.status_code == 429:
+            print("Rate limited - need to slow down requests")
+        else:
+            print(f"Response: {r.text}")
+        continue
+
     matches = json.loads(r.text)
     matchDict.update({player:matches})
+
+print("Match IDs collected")
 
 # Dictionary with each key (matches) having an associated value (count of match appearances) to determine if it is a shared match 
 match_counts = {}
@@ -74,15 +108,43 @@ for player in matchDict:
 shared_games = []
 
 for match, count in match_counts.items():
-    if count >= 4:
+    if count >= MIN_SHARED_PLAYERS:
         shared_games.append(match)
 
-print("Shared games found:", len(shared_games))
+print(f"{len(shared_games)} shared games found")
 
 # If shared games exist in the list - get the match data for the first game
 if shared_games:
-    for match in shared_games:
-        r = requests.get(riotapi + breakdownapi + match + "?api_key=" + apikey)
+    start_time = time.perf_counter()
+
+    for count, match in enumerate(shared_games, start=1):
+
+        if count <= 2:
+            print(f"Processing match {count} of {len(shared_games)}")
+        
+        else:
+            elapsed_time = time.perf_counter() - start_time
+            avg_time_per_match = elapsed_time / count
+            estimated_remaining = avg_time_per_match * (len(shared_games) - count)
+
+            print(f"Processing match {count} of {len(shared_games)}. About {int(estimated_remaining)} seconds remaining")
+
+        r = requests.get(RIOT_API_BASE + MATCH_BREAKDOWN_API_ENDPOINT + match + "?api_key=" + apikey)
+
+        time.sleep(RATE_LIMIT_DELAY)
+
+        if r.status_code != 200:
+            print(f"Error getting match data for  match ID: {match}: {r.status_code}")
+            if r.status_code == 404:
+                print(f"Match ID {match} not found")
+            elif r.status_code == 403:
+                print("Invalid API key")
+            elif r.status_code == 429:
+                print("Rate limited - need to slow down requests")
+            else:
+                print(f"Response: {r.text}")
+            continue
+        
         match_data = json.loads(r.text)
         current_match_id = match_data["metadata"]["matchId"]
 
@@ -100,7 +162,7 @@ if shared_games:
 
         # Check to see if the participant in the array is on our team, if yes, save the data
         for participant in participants:
-            if participant["puuid"] in puuid_list:
+            if participant["puuid"] in gamer_dict.values():
                 conn.execute("""INSERT OR REPLACE INTO match_participants (
                         match_id,
                         participant_id,
@@ -177,7 +239,7 @@ if shared_games:
         my_team_id = None
 
         for participant in participants:
-            if participant["puuid"] in puuid_list:
+            if participant["puuid"] in gamer_dict.values():
                 my_team_id = participant["teamId"]
                 break
         
