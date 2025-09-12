@@ -179,12 +179,18 @@ if shared_games:
             continue
 
         try:
-            conn.execute("""INSERT OR REPLACE INTO matches (match_id, game_duration, patch_version)
-                        VALUES (?, ?, ?)
+            match_json = match_data["info"].copy()
+
+            match_json.pop("participants", None)
+            match_json.pop("teams", None)
+
+            match_json = json.dumps(match_json)
+
+            conn.execute("""INSERT OR REPLACE INTO matches (match_id, match_json)
+                        VALUES (?, ?)
             """, [
                 match_data["metadata"]["matchId"],
-                match_data["info"]["gameDuration"],
-                match_data["info"]["gameVersion"]
+                match_json
             ]
             )
 
@@ -194,11 +200,11 @@ if shared_games:
 
         # Captures participant json array to be parsed through later
         if "info" not in match_data:
-            print("Match ID {match} missing 'info' section. Skipping.")
+            print(f"Match ID {match} missing 'info' section. Skipping.")
             continue
         
-        if "paticipants" not in match_data["info"]:
-            print("Match ID {match} missing participants. Skipping")
+        if "participants" not in match_data["info"]:
+            print(f"Match ID {match} missing participants. Skipping")
             continue
 
         participants = match_data["info"]["participants"]
@@ -206,76 +212,17 @@ if shared_games:
         # Check to see if the participant in the array is on our team, if yes, save the data
         for participant in participants:
             if participant["puuid"] in gamer_dict.values():
+                participant_json = json.dumps(participant)
                 try:
-                    conn.execute("""INSERT OR REPLACE INTO match_participants (
+                    conn.execute("""INSERT OR REPLACE INTO participants (
                             match_id,
-                            participant_id,
-                            win,
-                            summoner_name,
-                            champion_name,
-                            role,
-                            team_id,
-                            kills,
-                            deaths,
-                            assists,
-                            is_first_blood_kill,
-                            longest_time_living,
-                            total_time_dead,
-                            minion_cs,
-                            total_cs,
-                            all_in_pings,
-                            assist_pings,
-                            mia_pings,
-                            get_back_pings,
-                            need_vision_pings,
-                            push_pings,
-                            turret_kills,
-                            turret_takedowns,
-                            dragon_kills,
-                            baron_kills,
-                            objectives_stolen,
-                            consumables_purchased,
-                            sight_wards_bought,
-                            vision_wards_bought,
-                            vision_score,
-                            wards_placed,
-                            pink_wards_placed,
-                            wards_killed
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            puuid,
+                            participant_json
+                        ) VALUES (?, ?, ?)
                     """, [
-                        match,                           
-                        participant["participantId"],          
-                        participant["win"],                    
-                        participant["riotIdGameName"],         
-                        participant["championName"],
-                        participant["role"],           
-                        participant["teamId"],                 
-                        participant["kills"],                  
-                        participant["deaths"],                 
-                        participant["assists"],                
-                        participant["firstBloodKill"],         
-                        participant["longestTimeSpentLiving"], 
-                        participant["totalTimeSpentDead"],
-                        participant["neutralMinionsKilled"],     
-                        participant["totalMinionsKilled"],     
-                        participant["allInPings"],             
-                        participant["assistMePings"],          
-                        participant["enemyMissingPings"],      
-                        participant["getBackPings"],           
-                        participant["needVisionPings"],        
-                        participant["pushPings"],              
-                        participant["turretKills"],            
-                        participant["turretTakedowns"],        
-                        participant["dragonKills"],            
-                        participant["baronKills"],             
-                        participant["objectivesStolen"],       
-                        participant["consumablesPurchased"],   
-                        participant["sightWardsBoughtInGame"], 
-                        participant["visionWardsBoughtInGame"],
-                        participant["visionScore"],            
-                        participant["wardsPlaced"],            
-                        participant["detectorWardsPlaced"],    
-                        participant["wardsKilled"]             
+                        match,
+                        participant["puuid"],                           
+                        participant_json             
                     ]
                     )
 
@@ -293,33 +240,37 @@ if shared_games:
         if "teams" not in match_data["info"]:
             print(f"Match ID {match} missing 'teams' section. Skipping")
             continue
-
         teams = match_data["info"]["teams"]
+
         for team in teams:
+            team_json = team.copy()
+            team_json.pop("bans", None)
+            team_json.pop("objectives", None)
+
+            bans_json = team["bans"]
+            objectives_json = team["objectives"]
+
             is_my_team = (team["teamId"] == my_team_id)
+            team_json = json.dumps(team_json)
+            bans_json = json.dumps(bans_json)
+            objectives_json = json.dumps(objectives_json)
 
             try:
-                conn.execute("""INSERT OR REPLACE INTO match_objectives (
+                conn.execute("""INSERT OR REPLACE INTO teams (
                     match_id, 
                     team_id, 
-                    is_my_team, 
-                    is_first_dragon, 
-                    total_dragon_kills, 
-                    total_baron_kills, 
-                    total_grub_kills, 
-                    rift_herald_kills, 
-                    atakhan_kills
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_my_team,
+                    team_json,
+                    bans_json,
+                    objectives_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                 """, [
                     match,
                     team["teamId"],
                     is_my_team,
-                    team["objectives"]["dragon"]["first"],
-                    team["objectives"]["dragon"]["kills"],
-                    team["objectives"]["baron"]["kills"],
-                    team["objectives"]["horde"]["kills"],
-                    team["objectives"]["riftHerald"]["kills"],
-                    team["objectives"]["atakhan"]["kills"]
+                    team_json,
+                    bans_json,
+                    objectives_json
                 ]
                 )
             
