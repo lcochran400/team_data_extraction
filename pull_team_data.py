@@ -2,9 +2,10 @@ import requests
 import json
 import duckdb
 import time
-from dotenv import load_dotenv
 import os
 import sys
+from collections import Counter
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -130,14 +131,11 @@ for player, id in gamer_dict.items():
 print("✅ Match IDs collected")
 
 # Dictionary with each key (matches) having an associated value (count of match appearances) to determine if it is a shared match 
-match_counts = {}
+match_counts = collections.Counter()
 
 for player in matchDict:
     for match in matchDict[player]:
-        if match in match_counts:
-            match_counts[match] = match_counts[match] + 1
-        else:
-            match_counts[match] = 1
+        cnt[match] += 1
 
 # List of match IDs with 4 or more isntances in the match count dictionary
 shared_games = []
@@ -176,8 +174,6 @@ if shared_games:
         except:
             print(f"Failed to parse match data for match ID {match}. Skipping to next match.")
             continue
-
-        current_match_id = match_data["metadata"]["matchId"]
 
         try:
             conn.execute("""INSERT OR REPLACE INTO matches (match_id, game_duration, patch_version)
