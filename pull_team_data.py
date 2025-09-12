@@ -20,13 +20,8 @@ MIN_SHARED_PLAYERS = 4 # The number of team members that must be in a match for 
 RATE_LIMIT_DELAY = 1.2 # This ensures that you won't hit the API limits (max 100 calls in 2 mins)
 
 # Team Members
-TEAM_MEMBERS = [
-    {"name": "Grumby", "tag": "GRMBY"},
-    {"name": "T1 Ruler jr", "tag": "NA1"},
-    {"name": "FlareStriker", "tag": "NA1"},
-    {"name": "Serezal", "tag": "7777"},
-    {"name": "MopishSeeker", "tag": "NA1"}
-]
+team_members_str = os.getenv("TEAM_MEMBERS")
+team_members = json.loads(team_members_str)
 
 # Functions
 def safe_api_request(url, timeout=5, breakdown=False, match_id=None):
@@ -61,7 +56,7 @@ conn = duckdb.connect(database_path)
 # Dictionary of name & PUUIDs pulled from game names and tagline API call
 gamer_dict = {}
 
-for member in TEAM_MEMBERS:
+for member in team_members:
 
     name = member["name"]
     tag = member["tag"]
@@ -209,19 +204,29 @@ if shared_games:
 
         participants = match_data["info"]["participants"]
 
+        
+
         # Check to see if the participant in the array is on our team, if yes, save the data
         for participant in participants:
             if participant["puuid"] in gamer_dict.values():
+                is_sub = False
+                for member in team_members:
+                    if gamer_dict[member["name"]] == participant["puuid"]:
+                        is_sub = (member["role"] == "sub")
+                        break
+
                 participant_json = json.dumps(participant)
                 try:
                     conn.execute("""INSERT OR REPLACE INTO participants (
                             match_id,
                             puuid,
+                            is_sub,
                             participant_json
-                        ) VALUES (?, ?, ?)
+                        ) VALUES (?, ?, ?, ?)
                     """, [
                         match,
-                        participant["puuid"],                           
+                        participant["puuid"],
+                        is_sub,                           
                         participant_json             
                     ]
                     )

@@ -24,6 +24,7 @@ conn.execute("""
     CREATE OR REPLACE TABLE participants (
         match_id VARCHAR,
         puuid VARCHAR,
+        is_sub BOOLEAN,
         participant_json VARCHAR,
         PRIMARY KEY (match_id, puuid)
     )
