@@ -51,8 +51,8 @@ def safe_api_request(url, timeout=5, breakdown=False, match_id=None):
                 return None
 
 # Environment variables
-apikey = os.getenv('apikey')
-database_path = os.getenv('database_path')
+apikey = os.getenv('API_KEY')
+database_path = os.getenv('DATABASE_PATH')
 
 
 # Connect to local db

@@ -4,7 +4,7 @@ import os
 
 load_dotenv()
 
-database_path = os.getenv('database_path')
+database_path = os.getenv('DATABASE_PATH')
 
 # Connecting to duckdb database
 conn = duckdb.connect(database_path)
