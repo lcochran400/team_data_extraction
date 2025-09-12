@@ -4,6 +4,7 @@ import duckdb
 import time
 from dotenv import load_dotenv
 import os
+import sys
 
 load_dotenv()
 
@@ -26,6 +27,28 @@ TEAM_MEMBERS = [
     {"name": "MopishSeeker", "tag": "NA1"}
 ]
 
+# Functions
+def safe_api_request(url, timeout=5, breakdown=False, match_id=None):
+    try:
+        r = requests.get(url, timeout=timeout)
+        return r
+    except:
+        print(f"Error connecting to network. Trying again.")
+
+        time.sleep(5)
+        # Second execution attempt
+        try:
+            r = requests.get(url, timeout=timeout)
+            return r
+
+        # Script exit on second failure
+        except:
+            if breakdown==False:
+                sys.exit("Error connecting to network. Please try again later")
+            else:
+                print(f"Error collecting data for match ID {match_id}. Skipping to next match ID.")
+                return None
+
 # Environment variables
 apikey = os.getenv('apikey')
 database_path = os.getenv('database_path')
@@ -44,10 +67,12 @@ for member in TEAM_MEMBERS:
 
     print(f"Collecting PUUID for {name}#{tag}")
 
-    r = requests.get(RIOT_API_BASE + PUUID_API_ENDPOINT + name + "/" + tag + "?api_key=" + apikey)
+    # Executing the API call for PUUID collection
+    r = safe_api_request(RIOT_API_BASE + PUUID_API_ENDPOINT + name + "/" + tag + "?api_key=" + apikey)
 
     time.sleep(RATE_LIMIT_DELAY)
 
+    # Error code printing
     if r.status_code != 200:
         print(f"Error getting PUUID for {name}#{tag}: {r.status_code}")
         if r.status_code == 404:
@@ -60,20 +85,26 @@ for member in TEAM_MEMBERS:
             print(f"Response: {r.text}")
         continue
 
-    data = json.loads(r.text)
+    # Store & extract API json results
+    try:
+        data = json.loads(r.text)
+    except:
+        sys.exit(f"Failed to parse PUUID data for {name}#{tag}. Please try again.")
+
     puuid = data["puuid"]
     gamer_dict[name] = puuid
 
-print("PUUIDs collected")
+print("✅ PUUIDs collected")
 
 # Dictionary of lists - each key (player) has a value (list) of all matches they have played
 matchDict = {}
 
 for player, id in gamer_dict.items():
 
-    print(f"Collecting latest {MATCH_COUNT} matche IDs for {player}")
+    print(f"Collecting latest {MATCH_COUNT} match IDs for {player}")
 
-    r = requests.get(RIOT_API_BASE + MATCH_API_ENDPOINT + id + "/ids?type=ranked&start=" + START_TIME + "&count=" + MATCH_COUNT + "&api_key=" + apikey)
+    # Executing API call for player matches
+    r = safe_api_request(RIOT_API_BASE + MATCH_API_ENDPOINT + id + "/ids?type=ranked&start=" + START_TIME + "&count=" + MATCH_COUNT + "&api_key=" + apikey)
 
     time.sleep(RATE_LIMIT_DELAY)
 
@@ -89,10 +120,14 @@ for player, id in gamer_dict.items():
             print(f"Response: {r.text}")
         continue
 
-    matches = json.loads(r.text)
+    try:
+        matches = json.loads(r.text)
+    except:
+        sys.exit(f"Failed to parse match data for {player}. Please try again.")
+
     matchDict.update({player:matches})
 
-print("Match IDs collected")
+print("✅ Match IDs collected")
 
 # Dictionary with each key (matches) having an associated value (count of match appearances) to determine if it is a shared match 
 match_counts = {}
@@ -111,25 +146,17 @@ for match, count in match_counts.items():
     if count >= MIN_SHARED_PLAYERS:
         shared_games.append(match)
 
-print(f"{len(shared_games)} shared games found")
-
 # If shared games exist in the list - get the match data for the first game
 if shared_games:
-    start_time = time.perf_counter()
 
     for count, match in enumerate(shared_games, start=1):
 
-        if count <= 2:
-            print(f"Processing match {count} of {len(shared_games)}")
+        print(f"Processing match {count} of {len(shared_games)}")
         
-        else:
-            elapsed_time = time.perf_counter() - start_time
-            avg_time_per_match = elapsed_time / count
-            estimated_remaining = avg_time_per_match * (len(shared_games) - count)
-
-            print(f"Processing match {count} of {len(shared_games)}. About {int(estimated_remaining)} seconds remaining")
-
-        r = requests.get(RIOT_API_BASE + MATCH_BREAKDOWN_API_ENDPOINT + match + "?api_key=" + apikey)
+        r = safe_api_request(RIOT_API_BASE + MATCH_BREAKDOWN_API_ENDPOINT + match + "?api_key=" + apikey, match_id=match,breakdown=True)
+        
+        if not r:
+            continue
 
         time.sleep(RATE_LIMIT_DELAY)
 
@@ -144,18 +171,27 @@ if shared_games:
             else:
                 print(f"Response: {r.text}")
             continue
-        
-        match_data = json.loads(r.text)
+        try:
+            match_data = json.loads(r.text)
+        except:
+            print(f"Failed to parse match data for match ID {match}. Skipping to next match.")
+            continue
+
         current_match_id = match_data["metadata"]["matchId"]
 
-        conn.execute("""INSERT OR REPLACE INTO matches (match_id, game_duration, patch_version)
-                    VALUES (?, ?, ?)
-        """, [
-            match_data["metadata"]["matchId"],
-            match_data["info"]["gameDuration"],
-            match_data["info"]["gameVersion"]
-        ]
-        )
+        try:
+            conn.execute("""INSERT OR REPLACE INTO matches (match_id, game_duration, patch_version)
+                        VALUES (?, ?, ?)
+            """, [
+                match_data["metadata"]["matchId"],
+                match_data["info"]["gameDuration"],
+                match_data["info"]["gameVersion"]
+            ]
+            )
+
+        # On failure, store error message and print > cancel operation
+        except Exception as e:
+            sys.exit(f"Database error while inserting match data: {e}")
 
         # Captures participant json array to be parsed through later
         participants = match_data["info"]["participants"]
@@ -163,77 +199,81 @@ if shared_games:
         # Check to see if the participant in the array is on our team, if yes, save the data
         for participant in participants:
             if participant["puuid"] in gamer_dict.values():
-                conn.execute("""INSERT OR REPLACE INTO match_participants (
-                        match_id,
-                        participant_id,
-                        win,
-                        summoner_name,
-                        champion_name,
-                        role,
-                        team_id,
-                        kills,
-                        deaths,
-                        assists,
-                        is_first_blood_kill,
-                        longest_time_living,
-                        total_time_dead,
-                        minion_cs,
-                        total_cs,
-                        all_in_pings,
-                        assist_pings,
-                        mia_pings,
-                        get_back_pings,
-                        need_vision_pings,
-                        push_pings,
-                        turret_kills,
-                        turret_takedowns,
-                        dragon_kills,
-                        baron_kills,
-                        objectives_stolen,
-                        consumables_purchased,
-                        sight_wards_bought,
-                        vision_wards_bought,
-                        vision_score,
-                        wards_placed,
-                        pink_wards_placed,
-                        wards_killed
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, [
-                    match,                           
-                    participant["participantId"],          
-                    participant["win"],                    
-                    participant["riotIdGameName"],         
-                    participant["championName"],
-                    participant["role"],           
-                    participant["teamId"],                 
-                    participant["kills"],                  
-                    participant["deaths"],                 
-                    participant["assists"],                
-                    participant["firstBloodKill"],         
-                    participant["longestTimeSpentLiving"], 
-                    participant["totalTimeSpentDead"],
-                    participant["neutralMinionsKilled"],     
-                    participant["totalMinionsKilled"],     
-                    participant["allInPings"],             
-                    participant["assistMePings"],          
-                    participant["enemyMissingPings"],      
-                    participant["getBackPings"],           
-                    participant["needVisionPings"],        
-                    participant["pushPings"],              
-                    participant["turretKills"],            
-                    participant["turretTakedowns"],        
-                    participant["dragonKills"],            
-                    participant["baronKills"],             
-                    participant["objectivesStolen"],       
-                    participant["consumablesPurchased"],   
-                    participant["sightWardsBoughtInGame"], 
-                    participant["visionWardsBoughtInGame"],
-                    participant["visionScore"],            
-                    participant["wardsPlaced"],            
-                    participant["detectorWardsPlaced"],    
-                    participant["wardsKilled"]             
-                ]
-                )
+                try:
+                    conn.execute("""INSERT OR REPLACE INTO match_participants (
+                            match_id,
+                            participant_id,
+                            win,
+                            summoner_name,
+                            champion_name,
+                            role,
+                            team_id,
+                            kills,
+                            deaths,
+                            assists,
+                            is_first_blood_kill,
+                            longest_time_living,
+                            total_time_dead,
+                            minion_cs,
+                            total_cs,
+                            all_in_pings,
+                            assist_pings,
+                            mia_pings,
+                            get_back_pings,
+                            need_vision_pings,
+                            push_pings,
+                            turret_kills,
+                            turret_takedowns,
+                            dragon_kills,
+                            baron_kills,
+                            objectives_stolen,
+                            consumables_purchased,
+                            sight_wards_bought,
+                            vision_wards_bought,
+                            vision_score,
+                            wards_placed,
+                            pink_wards_placed,
+                            wards_killed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, [
+                        match,                           
+                        participant["participantId"],          
+                        participant["win"],                    
+                        participant["riotIdGameName"],         
+                        participant["championName"],
+                        participant["role"],           
+                        participant["teamId"],                 
+                        participant["kills"],                  
+                        participant["deaths"],                 
+                        participant["assists"],                
+                        participant["firstBloodKill"],         
+                        participant["longestTimeSpentLiving"], 
+                        participant["totalTimeSpentDead"],
+                        participant["neutralMinionsKilled"],     
+                        participant["totalMinionsKilled"],     
+                        participant["allInPings"],             
+                        participant["assistMePings"],          
+                        participant["enemyMissingPings"],      
+                        participant["getBackPings"],           
+                        participant["needVisionPings"],        
+                        participant["pushPings"],              
+                        participant["turretKills"],            
+                        participant["turretTakedowns"],        
+                        participant["dragonKills"],            
+                        participant["baronKills"],             
+                        participant["objectivesStolen"],       
+                        participant["consumablesPurchased"],   
+                        participant["sightWardsBoughtInGame"], 
+                        participant["visionWardsBoughtInGame"],
+                        participant["visionScore"],            
+                        participant["wardsPlaced"],            
+                        participant["detectorWardsPlaced"],    
+                        participant["wardsKilled"]             
+                    ]
+                    )
+
+                except Exception as e:
+                    sys.exit(f"Database error while inserting participant data: {e}")
 
         # Identify team ID for match
         my_team_id = None
@@ -247,43 +287,37 @@ if shared_games:
         for team in teams:
             is_my_team = (team["teamId"] == my_team_id)
 
-            conn.execute("""INSERT OR REPLACE INTO match_objectives (
-                match_id, 
-                team_id, 
-                is_my_team, 
-                is_first_dragon, 
-                total_dragon_kills, 
-                total_baron_kills, 
-                total_grub_kills, 
-                rift_herald_kills, 
-                atakhan_kills
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [
-                match,
-                team["teamId"],
-                is_my_team,
-                team["objectives"]["dragon"]["first"],
-                team["objectives"]["dragon"]["kills"],
-                team["objectives"]["baron"]["kills"],
-                team["objectives"]["horde"]["kills"],
-                team["objectives"]["riftHerald"]["kills"],
-                team["objectives"]["atakhan"]["kills"]
-            ]
-            )
-        
+            try:
+                conn.execute("""INSERT OR REPLACE INTO match_objectives (
+                    match_id, 
+                    team_id, 
+                    is_my_team, 
+                    is_first_dragon, 
+                    total_dragon_kills, 
+                    total_baron_kills, 
+                    total_grub_kills, 
+                    rift_herald_kills, 
+                    atakhan_kills
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    match,
+                    team["teamId"],
+                    is_my_team,
+                    team["objectives"]["dragon"]["first"],
+                    team["objectives"]["dragon"]["kills"],
+                    team["objectives"]["baron"]["kills"],
+                    team["objectives"]["horde"]["kills"],
+                    team["objectives"]["riftHerald"]["kills"],
+                    team["objectives"]["atakhan"]["kills"]
+                ]
+                )
+            
+            except Exception as e:
+                sys.exit(f"Database error while inserting match objective data: {e}")
+
 else:
     print("No shared matches found")
 
-result = conn.execute("SELECT * FROM match_participants").fetchall()
-
-print("Total participant records:", len(result))    
-
-result = conn.execute("SELECT * FROM matches").fetchall()
-
-print("Total match records:", len(result))    
-
-result = conn.execute("SELECT * FROM match_objectives").fetchall()
-
-print("Total objective records:", len(result))    
+print("✅ data tables updated")
 
 conn.close()
