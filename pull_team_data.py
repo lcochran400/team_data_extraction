@@ -92,6 +92,9 @@ for member in TEAM_MEMBERS:
     except:
         sys.exit(f"Failed to parse PUUID data for {name}#{tag}. Please try again.")
 
+    if "puuid" not in data:
+        sys.exit(f"PUUID missing for {name}#{tag}")
+    
     puuid = data["puuid"]
     gamer_dict[name] = puuid
 
@@ -131,11 +134,11 @@ for player, id in gamer_dict.items():
 print("✅ Match IDs collected")
 
 # Dictionary with each key (matches) having an associated value (count of match appearances) to determine if it is a shared match 
-match_counts = collections.Counter()
+match_counts = Counter()
 
 for player in matchDict:
     for match in matchDict[player]:
-        cnt[match] += 1
+        match_counts[match] += 1
 
 # List of match IDs with 4 or more isntances in the match count dictionary
 shared_games = []
@@ -190,6 +193,14 @@ if shared_games:
             sys.exit(f"Database error while inserting match data: {e}")
 
         # Captures participant json array to be parsed through later
+        if "info" not in match_data:
+            print("Match ID {match} missing 'info' section. Skipping.")
+            continue
+        
+        if "paticipants" not in match_data["info"]:
+            print("Match ID {match} missing participants. Skipping")
+            continue
+
         participants = match_data["info"]["participants"]
 
         # Check to see if the participant in the array is on our team, if yes, save the data
@@ -278,7 +289,11 @@ if shared_games:
             if participant["puuid"] in gamer_dict.values():
                 my_team_id = participant["teamId"]
                 break
-        
+
+        if "teams" not in match_data["info"]:
+            print(f"Match ID {match} missing 'teams' section. Skipping")
+            continue
+
         teams = match_data["info"]["teams"]
         for team in teams:
             is_my_team = (team["teamId"] == my_team_id)
