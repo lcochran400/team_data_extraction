@@ -19,11 +19,15 @@ MATCH_COUNT="100" # The number of recent matches per puuid you want to pull
 MIN_SHARED_PLAYERS = 4 # The number of team members that must be in a match for it to be considered
 RATE_LIMIT_DELAY = 1.2 # This ensures that you won't hit the API limits (max 100 calls in 2 mins)
 
-# Team Members
+# Environment Variables
 team_members_str = os.getenv("TEAM_MEMBERS")
+
+# Variables
 team_members = json.loads(team_members_str)
+schema_checked = False
 
 # Functions
+# safe_api_request allows me to have a repeatable way to call APIs with consideration for errors and timeouts
 def safe_api_request(url, timeout=5, breakdown=False, match_id=None):
     try:
         r = requests.get(url, timeout=timeout)
@@ -44,6 +48,18 @@ def safe_api_request(url, timeout=5, breakdown=False, match_id=None):
             else:
                 print(f"Error collecting data for match ID {match_id}. Skipping to next match ID.")
                 return None
+
+# get_schema_fingerprint allows me to get a clear fingerprint of the keys available in the API
+# and compare against the new dataset I'm pulling so I can alert when changes occur
+def get_schema_fingerprint(data):
+    keys_list = []
+    keys_list.extend(data.keys())
+    keys_list.extend(data["info"].keys())
+    keys_list.extend(data["info"]["participants"][0].keys())
+    keys_list.extend(data["info"]["participants"][0]["challenges"].keys())
+    keys_list.extend(data["info"]["teams"][0].keys())
+    keys_list.extend(data["info"]["teams"][0]["objectives"].keys())
+    return keys_list
 
 # Environment variables
 apikey = os.getenv('API_KEY')
@@ -172,6 +188,42 @@ if shared_games:
         except:
             print(f"Failed to parse match data for match ID {match}. Skipping to next match.")
             continue
+        
+        if not schema_checked:
+            current_fingerprint = get_schema_fingerprint(match_data)
+
+            try:
+                # Open the ref_sample.json (this is just checking to see if the file exists)
+                with open("schema_reference.json") as fp:
+                    # This is storing the json from the ref_sample.json into the variable reference_data
+                    reference_data = json.load(fp)
+                    reference_fingerprint = get_schema_fingerprint(reference_data)
+                    # If reference data keys are the same as the API json keys, print confirmation
+                    if current_fingerprint == reference_fingerprint:
+                        print("✅ no schema changes identified")
+                    # If reference data keys are different, notify user and then update the ref file
+                    else:
+                        print("⚠️ changes identified - update data models")
+                        with open("schema_reference.json", "w") as fp:
+                            current_set = set(current_fingerprint)
+                            reference_set = set(reference_fingerprint)
+
+                            new_keys = current_set - reference_set
+                            missing_keys = reference_set - current_set
+
+                            if new_keys:
+                                print(f"➕ New keys added: {new_keys}")
+                            if missing_keys:
+                                print(f"➖ Keys removed: {missing_keys}")
+                            json.dump(match_data, fp)
+            # If the file doesn't exist, create a new file and add the json from the API call for future reference
+            except:
+                print("⚠️ File doesn't exist - creating file now...")
+                with open("schema_reference.json", "x") as fp:
+                    json.dump(match_data, fp)
+                    print("Reference file created")
+            
+            schema_checked = True
 
         try:
             match_json = match_data["info"].copy()
@@ -203,8 +255,6 @@ if shared_games:
             continue
 
         participants = match_data["info"]["participants"]
-
-        
 
         # Check to see if the participant in the array is on our team, if yes, save the data
         for participant in participants:

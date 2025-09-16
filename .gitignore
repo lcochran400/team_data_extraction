@@ -21,3 +21,6 @@ __pycache__/
 
 # Windows
 desktop.ini
+
+# JSON ref
+schema_reference.json
