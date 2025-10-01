@@ -161,35 +161,13 @@ for match, count in match_counts.items():
 # If shared games exist in the list - get the match data for the first game
 if shared_games:
 
-    for count, match in enumerate(shared_games, start=1):
+    if not schema_checked:
+        print("Performing schema validation...")
+        r = safe_api_request(RIOT_API_BASE + MATCH_BREAKDOWN_API_ENDPOINT + shared_games[0] + "?api_key=" + apikey, match_id=shared_games[0],breakdown=True)
 
-        print(f"Processing match {count} of {len(shared_games)}")
-        
-        r = safe_api_request(RIOT_API_BASE + MATCH_BREAKDOWN_API_ENDPOINT + match + "?api_key=" + apikey, match_id=match,breakdown=True)
-        
-        if not r:
-            continue
-
-        time.sleep(RATE_LIMIT_DELAY)
-
-        if r.status_code != 200:
-            print(f"Error getting match data for  match ID: {match}: {r.status_code}")
-            if r.status_code == 404:
-                print(f"Match ID {match} not found")
-            elif r.status_code == 403:
-                print("Invalid API key")
-            elif r.status_code == 429:
-                print("Rate limited - need to slow down requests")
-            else:
-                print(f"Response: {r.text}")
-            continue
-        try:
+        if r and r.status_code == 200:
             match_data = json.loads(r.text)
-        except:
-            print(f"Failed to parse match data for match ID {match}. Skipping to next match.")
-            continue
-        
-        if not schema_checked:
+
             current_fingerprint = get_schema_fingerprint(match_data)
 
             try:
@@ -224,6 +202,38 @@ if shared_games:
                     print("Reference file created")
             
             schema_checked = True
+        
+        else:
+            print("Schema check failed - exiting")
+            sys.exit()
+
+    for count, match in enumerate(shared_games, start=1):
+
+        print(f"Processing match {count} of {len(shared_games)}")
+        
+        r = safe_api_request(RIOT_API_BASE + MATCH_BREAKDOWN_API_ENDPOINT + match + "?api_key=" + apikey, match_id=match,breakdown=True)
+        
+        if not r:
+            continue
+
+        time.sleep(RATE_LIMIT_DELAY)
+
+        if r.status_code != 200:
+            print(f"Error getting match data for  match ID: {match}: {r.status_code}")
+            if r.status_code == 404:
+                print(f"Match ID {match} not found")
+            elif r.status_code == 403:
+                print("Invalid API key")
+            elif r.status_code == 429:
+                print("Rate limited - need to slow down requests")
+            else:
+                print(f"Response: {r.text}")
+            continue
+        try:
+            match_data = json.loads(r.text)
+        except:
+            print(f"Failed to parse match data for match ID {match}. Skipping to next match.")
+            continue
 
         try:
             match_json = match_data["info"].copy()
